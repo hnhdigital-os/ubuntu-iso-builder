@@ -21,6 +21,8 @@ class BuildCommand extends Command
                             {config-path : Config path for building ISO}
                             {--override= : Config override path}
                             {--action= : Run a specific action}
+                            {--sub-action= : Action to run on sub-processs}
+                            {--data= : Data if needed by action}
                             {--level=1 : Level of build}';
 
     /**
@@ -92,14 +94,22 @@ class BuildCommand extends Command
                 case 1:
                     $methods = [
                         'iso-copy',
-                        'iso-modify',
+                        'fs-open',
+                        'fs-modify',
+                        'fs-close',
                         'iso-create'
                     ];
                     break;
                 case 2:
                     $methods = [
                         'iso-copy',
-                        'source-open',
+                        'fs-open',
+                    ];
+                    break;
+                case 3:
+                    $methods = [
+                        'fs-close',
+                        'iso-create'
                     ];
                     break;
             }
@@ -190,13 +200,302 @@ class BuildCommand extends Command
      *
      * @return string
      */
-    private function sourceOpen()
+    private function fsOpen()
     {
-        $this->call('squashfs', [
-            'mode'         => 'open',
-            '--fs-path'    => $this->fs_path,
-            '--mount-path' => $this->mount_path,
+        $this->call('fs', [
+            'mode'          => 'open',
+            '--cwd'         => $this->cwd,
+            '--fs-path'     => $this->fs_path,
+            '--mount-path'  => $this->mount_path,
+            '--source-path' => $this->source_path,
         ]);
+    }
+
+    /**
+     * Modify the file system.
+     *
+     * @return void
+     */
+    private function fsModify()
+    {
+        $this->fsUpgradeSoftware();
+        $this->fsInstallPackages();
+        $this->fsDebInstall();
+        $this->fsPurgePackages();
+        $this->fsScripts();
+        $this->fsReplaceFiles();
+        $this->fsTextReplace();
+    }
+
+    /**
+     * Install packages.
+     *
+     * @return void
+     */
+    private function fsUpgradeSoftware()
+    {
+        $this->fsAction('upgrade-software');
+    }
+
+    /**
+     * Install packages.
+     *
+     * @return void
+     */
+    private function fsAddAptRepo()
+    {
+        $repos = implode(',', (array) array_get($this->config, 'packages.repo', []));
+
+        if (empty($repos)) {
+            if ($this->option('action') == 'fs-add-apt-repo') {
+                $this->error('No apt repositories configured for addition');
+            }
+
+            return;
+        }
+
+        $this->fsAction('add-apt-repo', $repos);
+    }
+
+    /**
+     * Install packages.
+     *
+     * @return void
+     */
+    private function fsInstallPackages()
+    {
+        // Check that the repo's have been added.
+        $this->fsAddAptRepo();
+
+        $packages = implode(',', (array) array_get($this->config, 'packages.install', []));
+
+        if (empty($packages)) {
+            if ($this->option('action') == 'fs-install-packages') {
+                $this->error('No packages configured for install');
+            }
+
+            return;
+        }
+
+        $this->fsAction('install-package', $packages);
+    }
+
+    /**
+     * Install packages.
+     *
+     * @return void
+     */
+    private function fsDebInstall()
+    {
+        $packages = implode(',', (array) array_get($this->config, 'packages.deb-install', []));
+
+        if (empty($packages)) {
+            $this->error('No packages configured for deb-install');
+
+            return;
+        }
+
+        foreach ($packages as $package) {
+            if (!file_exists(sprintf('%s/install/%s', $this->cwd, $package))) {
+                $this->error(sprintf('%s not found in /install', $package));
+
+                return;
+            }
+        }
+
+        $this->fsAction('deb-install', $packages);
+    }
+
+    /**
+     * Purge packages.
+     *
+     * @return void
+     */
+    private function fsPurgePackages()
+    {
+        $packages = implode(',', (array) array_get($this->config, 'packages.purge', []));
+
+        if (empty($packages)) {
+            if ($this->option('action') == 'fs-purge-packages') {
+                $this->error('No packages configured for purge');
+            }
+
+            return;
+        }
+
+        $this->fsAction('purge-package', $packages);
+    }
+
+    /**
+     * Run bash scripts.
+     *
+     * @return void
+     */
+    private function fsScripts()
+    {
+        $chroot_scripts = implode(',', (array) array_get($this->config, 'chroot-scripts', []));
+
+        if (empty($chroot_scripts)) {
+            if ($this->option('action') == 'fs-scripts') {
+                $this->error('No bash scripts provided');
+            }
+
+            return;
+        }
+
+        $this->fsAction('run-scripts', $chroot_scripts);
+    }
+
+    /**
+     * Modify the file system.
+     *
+     * @return void
+     */
+    private function fsReplaceFiles()
+    {
+        $dir_iterator = new \RecursiveDirectoryIterator(
+            $this->cwd.'/replace',
+            \FilesystemIterator::SKIP_DOTS
+        );
+
+        $iterator = new \RecursiveIteratorIterator(
+            $dir_iterator,
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+
+        foreach ($iterator as $file) {
+            if ($file->isDir()) {
+                continue;
+            }
+
+            $path = str_replace($this->cwd.'/replace/', '', $file->getPathname());
+            $this->fsAction('replace-file', $path);
+        }
+    }
+
+    /**
+     * Run bash scripts.
+     *
+     * @return void
+     */
+    private function fsTextReplace()
+    {
+        $text_replace = (array) array_get($this->config, 'text-replace', []);
+
+        if (empty($text_replace)) {
+            if ($this->option('action') == 'fs-text-replace') {
+                $this->error('No text replace entries provided');
+            }
+
+            return;
+        }
+
+        foreach ($text_replace as $path => $replacements) {
+            foreach ($replacements as $find => $replace) {
+                $this->fsAction('text-replace', json_encode([
+                    'path'    => $path,
+                    'find'    => $find,
+                    'replace' => $replace,
+                ]));
+            }
+        }
+    }
+
+    /**
+     * Download packages for mirror.
+     *
+     * @return void
+     */
+    private function mirrorDownload()
+    {
+        $packages = implode(',', (array) array_get($this->config, 'packages.mirror', []));
+
+        if (empty($packages)) {
+            if ($this->option('action') == 'mirror-download') {
+                $this->error('No packages configured for mirror');
+            }
+
+            return;
+        }
+
+        $this->mirrorAction('download', $packages);
+    }
+
+    /**
+     * Transfer packages to the mirror.
+     *
+     * @return void
+     */
+    private function mirrorTransfer()
+    {
+        $this->mirrorAction('transfer');
+    }
+
+    /**
+     * Compile packages for mirror.
+     *
+     * @return void
+     */
+    private function mirrorCompile()
+    {
+        $config = [
+            'gpg'     => array_get($this->config, 'gpg', []),
+            'release' => array_get($this->config, 'release', []),
+        ];
+
+        $this->mirrorAction('compile', json_encode($config));
+    }
+
+    /**
+     * Create local mirror.
+     *
+     * @return void
+     */
+    private function mirrorConfigure()
+    {
+        $create_mirror = (bool) array_get($this->config, 'mirror.create', false);
+        $mirror_key = array_get($this->config, 'mirror.key');
+
+        if (!$create_mirror) {
+            return;
+        }
+
+        if (!file_exists($this->cwd.'/'.$mirror_key)) {
+            $this->error(sprintf('%s does not exist.', $mirror_key));
+
+            return 1;
+        }
+
+        $this->mirrorAction('configure-mirror', $mirror_key);
+    }
+
+    /**
+     * Run a FS action.
+     *
+     * @param  boolean|string $sub_action 
+     * @param  boolean|string $data
+     *
+     * @return string
+     */
+    private function fsAction($sub_action = false, $data = false)
+    {
+        if (empty($sub_action)) {
+            $sub_action = $this->option('sub-action');
+
+        }
+        if (empty($data)) {
+            $data = $this->option('data');
+        }
+
+        $this->call('fs', [
+            'mode'          => 'runAction',
+            '--cwd'         => $this->cwd,
+            '--fs-path'     => $this->fs_path,
+            '--mount-path'  => $this->mount_path,
+            '--source-path' => $this->source_path,
+            '--action'      => $sub_action,
+            '--data'        => $data,
+        ]);        
     }
 
     /**
@@ -204,12 +503,39 @@ class BuildCommand extends Command
      *
      * @return string
      */
-    private function sourceClose()
+    private function fsClose()
     {
-        $this->call('squashfs', [
+        $this->call('fs', [
             'mode'          => 'close',
             '--fs-path'     => $this->fs_path,
             '--source-path' => $this->source_path,
+        ]);
+    }
+
+    /**
+     * Run a mirror action.
+     *
+     * @param  boolean|string $action
+     * @param  boolean|string $data
+     *
+     * @return string
+     */
+    private function mirrorAction($action = false, $data = false)
+    {
+        if (empty($action)) {
+            $action = $this->option('sub-action');
+
+        }
+        if (empty($data)) {
+            $data = $this->option('data');
+        }
+
+        $this->call('mirror', [
+            'action'        => $action,
+            '--cwd'         => $this->cwd,
+            '--fs-path'     => $this->fs_path,
+            '--source-path' => $this->source_path,
+            '--data'        => $data,
         ]);
     }
 

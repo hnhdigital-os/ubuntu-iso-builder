@@ -89,17 +89,15 @@ class IsoCreateCommand extends Command
         file_put_contents($source_path.'/md5sum.txt', $md5sum);
 
         // Create the ISO.
-        list($exit_code, $last_line, $output) = $this->exec('mkisofs -r -quiet -V "%s" \
+        list($exit_code, $output) = $this->exec('mkisofs -r -quiet -V "%s" \
             -cache-inodes \
             -J -l -b isolinux/isolinux.bin \
             -c isolinux/boot.cat -no-emul-boot \
             -boot-load-size 4 -boot-info-table \
             -input-charset utf-8 \
-            -o "%s" "%s"', $iso_label, $iso_path, $source_path, ['output' => 'all']);
+            -o "%s" "%s"', $iso_label, $iso_path, $source_path, ['return' => 'all']);
 
         if ($exit_code) {
-            $this->error($last_line);
-
             return 1;
         }
 
