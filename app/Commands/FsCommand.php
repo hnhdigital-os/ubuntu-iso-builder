@@ -141,10 +141,10 @@ class FsCommand extends Command
 
         // Chroot the filesystem.
         $this->exec('cp "/etc/resolv.conf" "%s/run/systemd/resolve/stub-resolv.conf"', $this->fs_path);
-        $this->mount('/dev', $this->fs_path.'/dev', ['sudo' => true]);
+        $this->mount('/dev', $this->fs_path.'/dev', ['sudo' => true, 'options' => 'r']);
 
         if (!empty($this->cwd)) {
-            $this->mount($this->cwd, $this->fs_path.'/host', ['sudo' => true]);
+            $this->mount($this->cwd, $this->fs_path.'/host', ['sudo' => true, 'options' => 'r']);
         }
 
         $this->init();
@@ -515,9 +515,14 @@ class FsCommand extends Command
 
         $this->unmount($this->fs_path.'/dev', ['sudo' => true]);
         $this->unmount($this->fs_path.'/host', ['sudo' => true]);
+        $this->unmount($this->fs_path.'/mirror-files', ['sudo' => true]);
 
         if (file_exists($this->fs_path.'/host')) {
             $this->exec('sudo rmdir "%s"', $this->fs_path.'/host');
+        }
+
+        if (file_exists($this->fs_path.'/mirror-files')) {
+            $this->exec('sudo rmdir "%s"', $this->fs_path.'/mirror-files');
         }
 
         if ($delete && file_exists($this->fs_path)) {

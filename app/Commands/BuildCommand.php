@@ -96,6 +96,7 @@ class BuildCommand extends Command
                         'iso-copy',
                         'fs-open',
                         'fs-modify',
+                        'create-mirror',
                         'fs-close',
                         'iso-create'
                     ];
@@ -402,6 +403,25 @@ class BuildCommand extends Command
     }
 
     /**
+     * Create mirror.
+     *
+     * @return void
+     */
+    private function createMirror()
+    {
+        $create_mirror = (bool) array_get($this->config, 'mirror.create', false);
+
+        if (!$create_mirror) {
+            return;
+        }
+
+        $this->mirrorDownload();
+        $this->mirrorCopy();
+        $this->mirrorCompile();
+        $this->mirrorConfigure();
+    }
+
+    /**
      * Download packages for mirror.
      *
      * @return void
@@ -426,9 +446,9 @@ class BuildCommand extends Command
      *
      * @return void
      */
-    private function mirrorTransfer()
+    private function mirrorCopy()
     {
-        $this->mirrorAction('transfer');
+        $this->mirrorAction('copy-mirror');
     }
 
     /**
@@ -443,7 +463,7 @@ class BuildCommand extends Command
             'release' => array_get($this->config, 'release', []),
         ];
 
-        $this->mirrorAction('compile', json_encode($config));
+        $this->mirrorAction('compile-mirror', json_encode($config));
     }
 
     /**
@@ -453,12 +473,7 @@ class BuildCommand extends Command
      */
     private function mirrorConfigure()
     {
-        $create_mirror = (bool) array_get($this->config, 'mirror.create', false);
         $mirror_key = array_get($this->config, 'mirror.key');
-
-        if (!$create_mirror) {
-            return;
-        }
 
         if (!file_exists($this->cwd.'/'.$mirror_key)) {
             $this->error(sprintf('%s does not exist.', $mirror_key));

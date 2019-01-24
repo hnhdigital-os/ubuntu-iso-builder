@@ -84,7 +84,13 @@ class MirrorCommand extends Command
             $this->mirror_path = $this->cwd.'/'.$basename.'.mirror';
         }
 
+        // Create mirror.
         $this->createDirectory($this->mirror_path);
+        $this->createDirectory($this->fs_path.'/mirror-files');
+        $this->exec('chmod 1777 "%s"', $this->mirror_path);
+
+        // Mount.
+        $this->mount($this->mirror_path, $this->fs_path.'/mirror-files', ['sudo' => true]);
 
         $method_name = camel_case($this->argument('action'));
 
@@ -109,15 +115,18 @@ class MirrorCommand extends Command
             return 1;
         }
 
-        $this->exec('apt-get update');
+        $this->exec('apt-get update', ['chroot' => $this->fs_path]);
 
         $packages = str_replace(',', ' ', $packages);
 
-        $depends = $this->exec('apt-rdepends %s | grep -v "^ "', $packages);
-        $depends_list = explode("\n", $depends);
+        $depends_list = $this->exec('apt-rdepends %s | grep -v "^ "', $packages, [
+            'return' => 'output',
+        ]);
 
         foreach ($depends_list as $package) {
-            $latest_package_version = trim($this->exec('apt-cache policy %s  | grep "Candidate: " | awk \'{print $2}\'', $package));
+            $latest_package_version = trim($this->exec('apt-cache policy %s  | grep "Candidate: " | awk \'{print $2}\'', $package, [
+                'return' => 'output_string'
+            ]));
 
             $current_package_path = array_get(glob(sprintf('%s/%s_*.deb', $this->mirror_path, $package)), 0, false);
             $current_package_version = array_get(explode('_', str_replace('%3a', ':', basename($current_package_path))), 1, false);
@@ -131,7 +140,11 @@ class MirrorCommand extends Command
                 }
             }
 
-            $this->exec('cd %s && apt-get download %s', $this->mirror_path, $package);
+            $this->exec('cd "/mirror-files" && apt-get download %s', $package, [
+                'chroot'       => $this->fs_path,
+                'timeout'      => null,
+                'idle-timeout' => null,
+            ]);
         }
         
     }
@@ -141,7 +154,7 @@ class MirrorCommand extends Command
      *
      * @return void
      */
-    public function transfer()
+    public function copyMirror()
     {
         $local_mirror_path = sprintf('%s/local-mirror', $this->fs_path);
 
@@ -181,7 +194,7 @@ class MirrorCommand extends Command
      *
      * @return void
      */
-    public function compile()
+    public function compileMirror()
     {
         if (empty($config = $this->option('data'))) {
             $this->error('No config provided.');
