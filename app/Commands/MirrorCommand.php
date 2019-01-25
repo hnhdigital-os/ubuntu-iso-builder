@@ -200,7 +200,7 @@ class MirrorCommand extends Command
 
                 if ($latest_package_version === $current_package_version) {
                     if ($this->hasVerbose('v')) {
-                        $this->line(sprintf('[<info>MIRROR</info>] Skipped <info>%s</info>', $package));
+                        $this->line(sprintf('[<info>MIRROR</info>] Skipped downloading <info>%s</info>', $package));
                     }
 
                     $package_exists = true;
