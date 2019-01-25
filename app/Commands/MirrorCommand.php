@@ -81,16 +81,20 @@ class MirrorCommand extends Command
         // Mirror path.
         if (empty($this->mirror_path = $this->option('mirror-path'))) {
             $basename = basename(str_replace('.src', '', $this->source_path));
+
             $this->mirror_path = $this->cwd.'/'.$basename.'.mirror';
         }
 
         // Create mirror.
         $this->createDirectory($this->mirror_path);
         $this->createDirectory($this->fs_path.'/mirror-files');
-        $this->exec('chmod 1777 "%s"', $this->mirror_path);
+        $this->chmod($this->mirror_path, '1777', ['sudo' => true]);
 
         // Mount.
-        $this->mount($this->mirror_path, $this->fs_path.'/mirror-files', ['sudo' => true]);
+        $this->mount($this->mirror_path,
+            $this->fs_path.'/mirror-files', [
+            'sudo' => true
+        ]);
 
         $method_name = camel_case($this->argument('action'));
 
@@ -115,38 +119,105 @@ class MirrorCommand extends Command
             return 1;
         }
 
-        $this->exec('apt-get update', ['chroot' => $this->fs_path]);
+        $this->exec('apt-get update', [
+            'chroot' => $this->fs_path,
+        ]);
 
         $packages = str_replace(',', ' ', $packages);
 
         $depends_list = $this->exec('apt-rdepends %s | grep -v "^ "', $packages, [
-            'return' => 'output',
+            'return'       => 'output',
+            'timeout'      => null,
+            'idle-timeout' => null,
         ]);
 
         foreach ($depends_list as $package) {
-            $latest_package_version = trim($this->exec('apt-cache policy %s  | grep "Candidate: " | awk \'{print $2}\'', $package, [
-                'return' => 'output_string'
-            ]));
-
-            $current_package_path = array_get(glob(sprintf('%s/%s_*.deb', $this->mirror_path, $package)), 0, false);
-            $current_package_version = array_get(explode('_', str_replace('%3a', ':', basename($current_package_path))), 1, false);
-
-            if (!empty($current_package_path)
-                && $latest_package_version != $current_package_version) {
-                $this->removeFile($current_package_path);
-
-                if ($this->hasVerbose('v')) {
-                    $this->line(sprintf('Deleted <info>%s</info>', $current_package_path));
-                }
+            // SKip empty package name.
+            if (empty($package)) {
+                continue;
             }
 
+            if ($this->checkExistingPackage($package)) {
+                continue;
+            }
+
+            // Download the file to the mirror-files folder.
+            // Set timeouts as sometimes it can take time.
             $this->exec('cd "/mirror-files" && apt-get download %s', $package, [
                 'chroot'       => $this->fs_path,
                 'timeout'      => null,
                 'idle-timeout' => null,
             ]);
         }
-        
+    }
+
+    /**
+     * Check existing package.
+     *
+     * @param string $package
+     *
+     * @return bool
+     */
+    private function checkExistingPackage($package)
+    {
+        // Get latest versio by checking cache.
+        list($exit_code, $latest_package_version) = $this->exec(
+            'apt-cache policy %s | grep "Candidate: "',
+            $package, [
+            'chroot' => $this->fs_path,
+            'return' => 'all',
+        ]);
+
+        if ($exit_code > 0) {
+            return false;
+        }
+
+        $latest_package_version = trim(str_replace('Candidate: ', '', array_get($latest_package_version, 0, '')));
+
+        // Get the current downloaded package path.
+        $packages = glob(sprintf('%s/%s_*.deb', $this->mirror_path, $package));
+
+        if (count($packages) === 0) {
+            return false;
+        }
+
+        $package_exists = false;
+
+        foreach ($packages as $current_package_path) {
+            // Get the version part from the package path.
+            $current_package_version = array_get(explode('_', str_replace('%3a', ':', basename($current_package_path))), 1, false);
+
+            if ($this->hasVerbose('v')) {
+                $this->line(sprintf(
+                    '[<info>MIRROR</info>] <info>%s</info> vs <info>%s</info>',
+                    $latest_package_version,
+                    $current_package_version
+                ));
+            }
+
+            // Path isn't empty and the versions don't match.
+            if (!empty($current_package_path) && !empty($current_package_version)) {
+
+                if ($latest_package_version === $current_package_version) {
+                    if ($this->hasVerbose('v')) {
+                        $this->line(sprintf('[<info>MIRROR</info>] Skipped <info>%s</info>', $package));
+                    }
+
+                    $package_exists = true;
+
+                    continue;
+                }
+
+                // Remove older package version.
+                $this->removeFile($current_package_path);
+
+                if ($this->hasVerbose('v')) {
+                    $this->line(sprintf('[<info>MIRROR</info>] Deleted <info>%s</info>', $current_package_path));
+                }
+            }
+        }
+
+        return $package_exists;
     }
 
     /**
