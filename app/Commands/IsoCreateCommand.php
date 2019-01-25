@@ -2,12 +2,13 @@
 
 namespace App\Commands;
 
+use HnhDigital\CliHelper\FileSystemTrait;
 use HnhDigital\CliHelper\OperatingTrait;
 use LaravelZero\Framework\Commands\Command;
 
 class IsoCreateCommand extends Command
 {
-    use OperatingTrait;
+    use FileSystemTrait, OperatingTrait;
 
     /**
      * The signature of the command.
@@ -50,9 +51,7 @@ class IsoCreateCommand extends Command
         }
 
         $iso_path_dir = dirname($iso_path);
-        if (!file_exists($iso_path_dir)) {
-            mkdir($iso_path_dir, 0755, true);
-        }
+        $this->createDirectory($iso_path_dir);
 
         if (file_exists($iso_path)) {
             if (!$this->option('force')) {
@@ -67,7 +66,7 @@ class IsoCreateCommand extends Command
         $source_folder = basename($source_path);
 
         // Remove existing filesystem.size file.
-        $this->exec('unlink "%s/casper/filesystem.size"', $source_path);
+        $this->removeFile(sprintf('%s/casper/filesystem.size', $source_path));
 
         // Generate filesystem size file.
         $this->exec('du -sx --block-size=1 "%s" | cut -f1 | tee "%s/casper/filesystem.size" >/dev/null', $source_path, $source_path);
@@ -86,7 +85,7 @@ class IsoCreateCommand extends Command
         $md5sum = str_replace($source_folder.'/', '', $md5sum);
 
         // Add to ISO.
-        file_put_contents($source_path.'/md5sum.txt', $md5sum);
+        $this->replaceFileContents($source_path.'/md5sum.txt', $md5sum);
 
         // Create the ISO.
         list($exit_code, $output) = $this->exec('mkisofs -r -quiet -V "%s" \
@@ -95,15 +94,16 @@ class IsoCreateCommand extends Command
             -c isolinux/boot.cat -no-emul-boot \
             -boot-load-size 4 -boot-info-table \
             -input-charset utf-8 \
-            -o "%s" "%s"', $iso_label, $iso_path, $source_path, ['return' => 'all']);
+            -o "%s" "%s"', $iso_label, $iso_path, $source_path, [
+                'return' => 'all'
+            ]);
 
         if ($exit_code) {
             return 1;
         }
 
         if (!$this->option('keep')) {
-            $this->exec('rm -rf "%s"', $source_path);
-            $this->exec('rm -rf "%s"', $source_path);
+            $this->removeDirectory($source_path);
         }
 
         $this->info(sprintf('%s created.', $iso_path));

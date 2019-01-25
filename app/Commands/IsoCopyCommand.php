@@ -63,17 +63,17 @@ class IsoCopyCommand extends Command
             $iso_src_path = $cwd.'/'.$basename.'.src';
         }
 
-        if (file_exists($iso_src_path)) {
-            $this->exec('sudo rm -rf "%s"', $iso_src_path);
-        }
+        // Clear existing directory.
+        $this->removeDirectory($iso_src_path);
 
-        mkdir($iso_src_path, 0755, true);
+        // Create new directory.
+        $this->createDirectory($iso_src_path);
 
         // Copy contents of the ISO.
         $this->exec('rsync -avq --exclude=/casper/filesystem.squashfs "%s/" "%s"', $this->iso_mount_path, $iso_src_path);
 
         // Set chmod on all the files.
-        $this->exec('chmod -R 755 "%s"', $iso_src_path);
+        $this->chmod($iso_src_path, '755');
 
         $this->line($iso_src_path);
 

@@ -141,10 +141,18 @@ class FsCommand extends Command
 
         // Chroot the filesystem.
         $this->exec('cp "/etc/resolv.conf" "%s/run/systemd/resolve/stub-resolv.conf"', $this->fs_path);
-        $this->mount('/dev', $this->fs_path.'/dev', ['sudo' => true, 'options' => 'r']);
+        $this->mount('/dev', $this->fs_path.'/dev', [
+            'sudo' => true,
+            'options' => 'r'
+        ]);
+
+        $this->mount('none', $this->fs_path.'/dev/pts', [
+            'sudo'    => true,
+            'type'    => '-t devpts',
+        ]);
 
         if (!empty($this->cwd)) {
-            $this->mount($this->cwd, $this->fs_path.'/host', ['sudo' => true, 'options' => 'r']);
+            $this->mount($this->cwd, $this->fs_path.'/host', ['sudo' => true]);
         }
 
         $this->init();
@@ -311,8 +319,11 @@ class FsCommand extends Command
             return 1;
         }
 
-        $output = $this->exec('mkdir -p "%s"', dirname('/'.$path), ['chroot' => $this->fs_path]);
-        $output = $this->exec('cp -f "/host/replace/%s" "/%s"', $path, $path, ['chroot' => $this->fs_path]);
+        $this->createDirectory(dirname('/'.$path), [
+            'chroot' => $this->fs_path
+        ]);
+
+        $this->exec('cp -f "/host/replace/%s" "/%s"', $path, $path, ['chroot' => $this->fs_path]);
 
         return 0;
     }
@@ -357,7 +368,7 @@ class FsCommand extends Command
             $fs_script_path = sprintf('%s/scripts/%s', $this->cwd, $script);
             $chroot_script_path = sprintf('/host/scripts/%s', $script);
 
-            $this->exec('chmod +x "%s"', $fs_script_path);
+            $this->chmod($fs_script_path, '+x');
             $commands[] = $chroot_script_path;
         }
 
@@ -450,9 +461,9 @@ class FsCommand extends Command
             $this->exec($command, ['chroot' => $this->fs_path]);
         }
 
-        if (file_exists($this->fs_path.'/chroot-init')) {
-            $this->exec('sudo unlink "%s/chroot-init"', $this->fs_path);
-        }
+        $this->removeFile(sprintf('%s/chroot-init', $this->fs_path), [
+            'sudo' => true,
+        ]);
     }
 
     /**
@@ -491,7 +502,7 @@ class FsCommand extends Command
 
         $this->exec('sudo mksquashfs "%s" "%s/casper/filesystem.squashfs" -b 1048576 >/dev/null', $this->fs_path, $this->source_path);
 
-        $this->exec('sudo rm -rf "%s"', $this->fs_path);
+        $this->removeDirectory($this->fs_path);
     }
 
     /**
@@ -521,12 +532,14 @@ class FsCommand extends Command
             $this->exec('sudo rmdir "%s"', $this->fs_path.'/host');
         }
 
-        if (file_exists($this->fs_path.'/mirror-files')) {
-            $this->exec('sudo rmdir "%s"', $this->fs_path.'/mirror-files');
-        }
+        $this->removeDirectory($this->fs_path.'/mirror-files', [
+            'sudo' => true,
+        ]);
 
-        if ($delete && file_exists($this->fs_path)) {
-            $this->exec('sudo rm -rf "%s"', $this->fs_path);
+        if ($delete) {
+            $this->removeDirectory($this->fs_path, [
+                'sudo' => true,
+            ]);
         }
     }
 }

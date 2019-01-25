@@ -45,7 +45,7 @@ class IsoMountCommand extends Command
         if (empty($iso_mount_path = $this->option('mount-path'))) {
             $cwd = getcwd();
             $basename = basename($iso_path);
-            $iso_mount_path = $cwd.'/'.$basename.'.mount';
+            $iso_mount_path = sprintf('%s/%s.mount', $cwd, $basename);
         }
 
         if (file_exists($iso_mount_path)) {
@@ -62,10 +62,14 @@ class IsoMountCommand extends Command
                 return 1;
             }
         } else {
-            mkdir($iso_mount_path, 0755, true);
+            $this->createDirectory($iso_mount_path);
         }
 
-        $this->exec('sudo mount -o loop -r "%s" "%s"', $iso_path, $iso_mount_path);
+        $this->mount($iso_path, $iso_mount_path, [
+            'sudo'    => true,
+            'type'    => '-o loop',
+            'options' => 'r',
+        ]);
 
         $this->line($iso_mount_path);
 
