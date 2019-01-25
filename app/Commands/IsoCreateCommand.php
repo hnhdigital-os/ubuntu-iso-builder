@@ -85,7 +85,7 @@ class IsoCreateCommand extends Command
         $md5sum = str_replace($source_folder.'/', '', $md5sum);
 
         // Add to ISO.
-        $this->replaceFileContents($source_path.'/md5sum.txt', $md5sum);
+        $this->putFileContents($source_path.'/md5sum.txt', $md5sum);
 
         // Create the ISO.
         list($exit_code, $output) = $this->exec('mkisofs -r -quiet -V "%s" \

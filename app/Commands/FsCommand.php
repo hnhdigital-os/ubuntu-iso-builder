@@ -126,33 +126,18 @@ class FsCommand extends Command
 
         $this->line(sprintf('[<info>fs open</info>] Unsquashing FS @ %s/casper/filesystem.squashfs', $squashfs_path));
 
-        $exit_code = $this->exec('sudo unsquashfs -d "%s" "%s/casper/filesystem.squashfs"', $this->fs_path, $squashfs_path, [
+        $exit_code = $this->exec(
+            'unsquashfs -d "%s" "%s/casper/filesystem.squashfs"',
+            $this->fs_path,
+            $squashfs_path, [
             'return' => 'exit_code',
+            'sudo'   => true,
         ]);
 
         if ($exit_code) {
             $this->line('[<info>fs open</info>] <error>Failed to unsquashfs. Error code: %s</error>', $exit_code);
 
             return 1;
-        }
-
-        $this->exec('sudo chown 1777 "%s"', $this->fs_path);
-        $this->exec('sudo chmod 1777 "%s/tmp"', $this->fs_path);
-
-        // Chroot the filesystem.
-        $this->exec('cp "/etc/resolv.conf" "%s/run/systemd/resolve/stub-resolv.conf"', $this->fs_path);
-        $this->mount('/dev', $this->fs_path.'/dev', [
-            'sudo' => true,
-            'options' => 'r'
-        ]);
-
-        $this->mount('none', $this->fs_path.'/dev/pts', [
-            'sudo'    => true,
-            'type'    => '-t devpts',
-        ]);
-
-        if (!empty($this->cwd)) {
-            $this->mount($this->cwd, $this->fs_path.'/host', ['sudo' => true]);
         }
 
         $this->init();
@@ -197,20 +182,75 @@ class FsCommand extends Command
             return;
         }
 
-        $commands = [
-            'mount -t "proc" none "/proc" >/dev/null 2>&1',
-            'mount -t "sysfs" none "/sys" >/dev/null 2>&1',
-            'mount -t "devpts" none "/dev/pts" >/dev/null 2>&1',
-            'export HOME=/root',
-            'export LC_ALL=C.UTF-8',
-            'systemd-machine-id-setup >/dev/null 2>&1',
-            'dpkg-divert --local --rename --add "/sbin/initctl" >/dev/null',
-            'test -f "/sbin/initctl" || ln -s "/bin/true" "/sbin/initctl"',
-        ];
+        // Allow modification to root of the file system.
+        $this->chmod($this->fs_path, '1777');
 
-        $this->multiExec($commands);
+        // Set full access to tmp.
+        $this->chmodAll(sprintf('%s/tmp', $this->fs_path), '1777', [
+            'sudo' => true,
+        ]);
 
-        $this->exec('echo "%s" | sudo tee "%s/chroot-init"', date('Y-m-d H:i:s'), $this->fs_path);
+        // Add resolve.conf so we have internet in chroot.
+        $this->copyFile('/etc/resolv.conf', sprintf('%s/run/systemd/resolve/stub-resolv.conf', $this->fs_path), [
+            'sudo' => true,
+        ]);
+
+        // Mount /dev.
+        $this->mount('/dev', $this->fs_path.'/dev', [
+            'sudo'    => true,
+            'options' => 'r'
+        ]);
+
+        // Mount /dev/pts.
+        $this->mount('none', $this->fs_path.'/dev/pts', [
+            'sudo'   => true,
+            'type'   => '-t devpts',
+        ]);
+
+        // Mount /proc
+        $this->mount('none', $this->fs_path.'/proc', [
+            'sudo' => true,
+            'type' => '-t proc',
+        ]);
+
+        // Mount /sys
+        $this->mount('none', $this->fs_path.'/sys', [
+            'sudo' => true,
+            'type' => '-t sysfs',
+        ]);
+
+        // Mount current working directory inside for chroot access.
+        if (!empty($this->cwd)) {
+            $this->mount($this->cwd, $this->fs_path.'/host', ['sudo' => true]);
+        }
+
+        // Set $HOME variable to /root.
+        $this->exec('export HOME=/root', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Set the language encoding to UTF-8.
+        // Specifically for the php ppa.
+        $this->exec('export LC_ALL=C.UTF-8', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Set the machine ID.
+        $this->exec('systemd-machine-id-setup >/dev/null 2>&1', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Divert the initctl.
+        $this->exec('dpkg-divert --local --rename --add "/sbin/initctl" >/dev/null', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Mark initctl as true.
+        $this->exec('test -f "/sbin/initctl" || ln -s "/bin/true" "/sbin/initctl"', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        $this->putFileContents(sprintf('%s/chroot-init', $this->fs_path), date('Y-m-d H:i:s'));
 
         return 0;
     }
@@ -227,7 +267,7 @@ class FsCommand extends Command
             'apt-get -y upgrade --download-only --allow-unauthenticated',
         ];
 
-        $this->multiExec($commands);
+        $this->multiChrootExec($commands);
 
         return 0;
     }
@@ -252,7 +292,7 @@ class FsCommand extends Command
             $commands[] = sprintf('add-apt-repository -y %s', $repo);
         }
 
-        $this->multiExec($commands);
+        $this->multiChrootExec($commands);
 
         return 0;
     }
@@ -277,7 +317,7 @@ class FsCommand extends Command
             sprintf('apt-get -y -f install %s', $packages),
         ];
 
-        $this->multiExec($commands);
+        $this->multiChrootExec($commands);
 
         return 0;
     }
@@ -372,7 +412,7 @@ class FsCommand extends Command
             $commands[] = $chroot_script_path;
         }
 
-        $this->multiExec($commands);
+        $this->multiChrootExec($commands);
 
         return 0;
     }
@@ -418,7 +458,7 @@ class FsCommand extends Command
             return 0;
         }
 
-        $this->replaceFileContents($path, $contents);
+        $this->putFileContents($path, $contents);
 
         return 0;
     }
@@ -430,10 +470,12 @@ class FsCommand extends Command
      *
      * @return void
      */
-    private function multiExec($commands)
+    private function multiChrootExec($commands)
     {
         foreach ($commands as $command) {
-            $output = $this->exec($command, ['chroot' => $this->fs_path]);
+            $this->exec($command, [
+                'chroot' => $this->fs_path
+            ]);
         }
     }
 
@@ -444,23 +486,65 @@ class FsCommand extends Command
      */
     private function uninit()
     {
-        $commands = [
-            'apt-get -y -qq autoremove >/dev/null 2>&1',
-            'apt-get -y -qq autoclean >/dev/null 2>&1',
-            'rm -rf "/tmp/"* ~/.bash_history',
-            'echo "" | tee "/etc/machine-id"',
-            'rm "/sbin/initctl"',
-            'dpkg-divert --rename --remove "/sbin/initctl" >/dev/null',
-            'umount "/proc" >/dev/null || umount -lf "/proc" >/dev/null 2>&1',
-            'umount "/sys" >/dev/null 2>&1',
-            'umount "/dev/pts" >/dev/null 2>&1',
-        ];
+        // Auto remove packages no longer needed.
+        $this->exec('apt-get -y -qq autoremove', [
+            'chroot' => $this->fs_path,
+        ]);
 
-        foreach ($commands as $command) {
-            $this->line(sprintf('[<info>fs uninit</info>] %s', $command));
-            $this->exec($command, ['chroot' => $this->fs_path]);
-        }
+        // Auto clean packages no longer needed.
+        $this->exec('apt-get -y -qq autoclean', [
+            'chroot' => $this->fs_path,
+        ]);
 
+        // Remove any bash history.
+        $this->exec('rm -rf "/tmp/"* ~/.bash_history', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Reset machine-id.
+        $this->putFileContents('/etc/machine-id', '', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Delete file.
+        $this->removeFile('/sbin/initctl', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Remove diversion.
+        $this->exec('dpkg-divert --rename --remove "/sbin/initctl"', [
+            'chroot' => $this->fs_path,
+        ]);
+
+        // Unmount /dev/pts.
+        $this->unmount(sprintf('%s/dev/pts', $this->fs_path), [
+            'sudo' => true,
+        ]);
+
+        // Unmount /dev.
+        $this->unmount(sprintf('%s/dev', $this->fs_path), [
+            'sudo' => true,
+        ]);
+
+        // Unmount /mirror-files.
+        $this->unmount(sprintf('%s/mirror-files', $this->fs_path), [
+            'sudo' => true,
+        ]);
+
+        // Remove directory.
+        $this->removeDirectory(sprintf('%s/mirror-files', $this->fs_path));
+
+        // Unmount /sys.
+        $this->unmount(sprintf('%s/sys', $this->fs_path), [
+            'sudo' => true,
+        ]);
+
+        // Unmount /proc.
+        $this->unmount(sprintf('%s/proc', $this->fs_path), [
+            'sudo' => true,
+        ]);
+
+        // Remove chroot init file.
         $this->removeFile(sprintf('%s/chroot-init', $this->fs_path), [
             'sudo' => true,
         ]);
@@ -491,16 +575,28 @@ class FsCommand extends Command
         $this->cleanup();
 
         if (file_exists($this->fs_path.'/casper/filesystem.manifest')) {
-            $this->exec('sudo chmod +w "%s/casper/filesystem.manifest"', $this->fs_path);
+            $this->chmod(sprintf('%s/casper/filesystem.manifest', $this->fs_path), '+w', [
+                'sudo' => true,
+            ]);
         }
 
-        $this->exec('sudo chroot "%s" dpkg-query -W --showformat=\'${Package} ${Version}\n\' | sudo tee "%s/casper/filesystem.manifest"', $this->fs_path, $this->source_path);
+        $this->exec(
+            'chroot "%s" dpkg-query -W --showformat=\'${Package} ${Version}\n\' | sudo tee "%s/casper/filesystem.manifest"',
+            $this->fs_path,
+            $this->source_path, [
+            'sudo' => true,
+        ]);
 
         if (file_exists($this->source_path.'/casper/filesystem.squashfs')) {
             $this->exec('unlink "%s/casper/filesystem.squashfs"', $this->source_path);
         }
 
-        $this->exec('sudo mksquashfs "%s" "%s/casper/filesystem.squashfs" -b 1048576 >/dev/null', $this->fs_path, $this->source_path);
+        $this->exec(
+            'mksquashfs "%s" "%s/casper/filesystem.squashfs" -b 1048576 >/dev/null',
+            $this->fs_path,
+            $this->source_path, [
+            'sudo' => true,
+        ]);
 
         $this->removeDirectory($this->fs_path);
     }

@@ -73,7 +73,7 @@ class IsoCopyCommand extends Command
         $this->exec('rsync -avq --exclude=/casper/filesystem.squashfs "%s/" "%s"', $this->iso_mount_path, $iso_src_path);
 
         // Set chmod on all the files.
-        $this->chmod($iso_src_path, '755');
+        $this->chmodAll($iso_src_path, '755');
 
         $this->line($iso_src_path);
 

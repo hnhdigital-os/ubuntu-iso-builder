@@ -255,8 +255,10 @@ class MirrorCommand extends Command
             );
 
             $this->createDirectory($dest_path);
+            $this->chmod($dest_path, 'a+rx');
 
-            $this->exec('cp -R "%s" "%s"', $package_path, $dest_path);
+            $this->copyFile($package_path, $dest_path);
+            $this->chmod(sprintf('%s/%s', $dest_path, basename($package_path)), 'a+r');
         }
     }
 
@@ -328,7 +330,7 @@ class MirrorCommand extends Command
         $text .= sprintf('APT::FTPArchive::Release::Version "%s";', array_get($config, 'release.version', ''));
         $text .= sprintf('APT::FTPArchive::Release::Codename "%s";', array_get($config, 'release.codename', ''));
         $text .= sprintf('APT::FTPArchive::Release::Architectures "%s";', array_get($config, 'release.architectures', ''));
-        $text .= sprintf('APT::FTPArchive::Release::Components "%s";', array_get($config, 'release.components', ''));
+        $text .= 'APT::FTPArchive::Release::Components "main";';
         $text .= sprintf('APT::FTPArchive::Release::Description "%s";', array_get($config, 'release.description', ''));
 
         return $text;
@@ -351,7 +353,7 @@ class MirrorCommand extends Command
 
         if (stripos($contents, 'local-mirror') === false) {
             $contents .= "\ndeb file:///local-mirror ./";
-            $this->replaceFileContents($sources_list_path, $contents);
+            $this->putFileContents($sources_list_path, $contents);
         }
 
         $this->exec('apt-key add "/host/%s"', $mirror_key, ['chroot' => $this->fs_path]);
